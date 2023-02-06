@@ -4,10 +4,8 @@ from random import choice
 import datetime
 import requests
 
-with open("token.txt", "r") as file:
-    tkn = file.readline().strip()
-
-risposta=requests.head("https://www.dia.uniroma3.it/~atzeni/didattica/BDN/20222023/proveParziali.html")
+WEBSITE="https://www.dia.uniroma3.it/~atzeni/didattica/BDN/20222023/proveParziali.html"
+LAST_DATE='Wed, 11 Jan 2023 09:17:49 GMT'
 
 class MyClient(discord.Client):
     async def on_ready(self):
@@ -28,16 +26,20 @@ async def update_counter(bot: MyClient):
 @tasks.loop(minutes=1)
 async def check_voti_pos(bot:MyClient):
     global risposta
-    risposta=requests.head("https://www.dia.uniroma3.it/~atzeni/didattica/BDN/20222023/proveParziali.html")
-    if risposta.headers["Last-Modified"]!='Wed, 11 Jan 2023 09:17:49 GMT':
+    risposta=requests.head(WEBSITE)
+    if risposta.headers["Last-Modified"]!=LAST_DATE:
         await bot.get_channel(1071923920527167530).send(f"SONO USCITI <@&962777211604172891>")
         await bot.get_channel(1071923920527167530).send(f"Il mio lavoro è finito, mi spengo")
         exit(0)
 
 @tasks.loop(minutes=30)
 async def check_voti_neg(bot):
-    if risposta.headers["Last-Modified"]=='Wed, 11 Jan 2023 09:17:49 GMT':
+    if risposta.headers["Last-Modified"]==LAST_DATE:
         await bot.get_channel(1071923920527167530).send("(non) SONO USCITI")
+
+with open("token.txt", "r") as file:
+    tkn = file.readline().strip()
+risposta=requests.head(WEBSITE)
 
 intents = discord.Intents.default()
 client = MyClient(intents=intents)
