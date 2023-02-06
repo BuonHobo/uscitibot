@@ -21,7 +21,7 @@ class MyClient(discord.Client):
 async def update_counter(bot: MyClient):
     seconds:datetime.timedelta=(check_voti_neg.next_iteration-datetime.datetime.now(datetime.timezone.utc)).seconds/60
     seconds=round(seconds)
-    activity= discord.Game(f"I'm checking every minute! Next message in {seconds}")
+    activity= discord.Game(f"I'm checking every minute! Next message in {seconds}'")
     await bot.change_presence(activity=activity)
 
 
