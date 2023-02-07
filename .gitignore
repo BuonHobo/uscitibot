@@ -1,2 +1,4 @@
 /token.txt
-/venv
+/venv/
+/__pycache__/
+/.vscode/
