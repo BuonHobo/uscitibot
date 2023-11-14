@@ -4,7 +4,6 @@ from watchlist import Watchlist
 from subscription import Subscription
 from discord.ext import tasks
 from discord import app_commands
-from discord.app_commands import CommandTree
 
 
 def save_data():
