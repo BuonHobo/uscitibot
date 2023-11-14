@@ -1,11 +1,11 @@
 from pathlib import Path
-from domain.classes import Channel, Server, User, Website, Monitor
+from domain.classes import Base, Server, User, Website, Monitor, Channel
 import domain.classes
 
 
 class CSVDomainLoader:
     @staticmethod
-    def load(folder: Path) -> list[Server]:
+    def load(folder: Path) -> Base:
         data: dict[str, list[str]] = {
             "servers.csv": [],
             "channels.csv": [],
@@ -31,23 +31,17 @@ class CSVDomainLoader:
         res = CSVDomainLoader.load_servers(data)
         res = list(res.values())
         CSVDomainLoader.load_monitors(res, monitor_data)
-        return res
+        return Base(res)
 
     @staticmethod
     def load_servers(data: dict[str, list[str]]) -> dict[int, Server]:
         servers: dict[int, Server] = {}
-        defaults: dict[Server, int] = {}
         for line in data["servers.csv"]:
-            id, default_channel = line.split(",")
-            id = int(id)
+            id = int(line)
             server = Server(id)
             servers[id] = server
-            if default_channel != "None":
-                defaults[server] = int(default_channel)
 
-        channels = CSVDomainLoader.load_channels(servers, data)
-        for server, defa in defaults.items():
-            server.set_default_channel(channels[defa])
+        CSVDomainLoader.load_channels(servers, data)
 
         return servers
 
@@ -104,7 +98,7 @@ class CSVDomainLoader:
 
 class CSVDomainSaver:
     @staticmethod
-    def save(servers: list[Server], folder: Path):
+    def save(base: Base, folder: Path):
         data: dict[str, list[str]] = {
             "servers.csv": [],
             "channels.csv": [],
@@ -113,6 +107,7 @@ class CSVDomainSaver:
             "users_websites.csv": [],
         }
 
+        servers = base.get_servers()
         CSVDomainSaver.save_servers(servers, data)
         folder.joinpath("monitors").mkdir(exist_ok=True)
 
@@ -123,12 +118,11 @@ class CSVDomainSaver:
     @staticmethod
     def save_servers(servers: list[Server], data: dict[str, list[str]]):
         channels: list[Channel] = []
-        data["servers.csv"].append(f"server id, default channel id (if present)\n")
+        data["servers.csv"].append(f"server id\n")
         for server in servers:
             channels.extend(server.get_channels())
-            default_channel = server.get_default_channel()
             data["servers.csv"].append(
-                f"{server.get_id()},{default_channel.get_id() if default_channel is not None else None}\n"
+                f"{server.get_id()}\n"
             )
 
         CSVDomainSaver.save_channels(channels, data)
@@ -147,16 +141,16 @@ class CSVDomainSaver:
 
     @staticmethod
     def save_websites(websites: list[Website], data: dict[str, list[str]]):
-        users: list[User] = []
+        users: set[User] = set()
         monitors: list[Monitor] = []
         data["websites.csv"].append(
             f"website url, website name, channel id, monitor class\n"
         )
         for website in websites:
-            users.extend(website.get_users())
+            users.update(website.get_users())
             monitors.append(website.get_monitor())
             data["websites.csv"].append(
-                f"{website.get_url()},{website.get_name()}, {website.get_channel().get_id()},{website.get_monitor().__class__.__name__}\n"
+                f"{website.get_url()},{website.get_name()},{website.get_channel().get_id()},{website.get_monitor().__class__.__name__}\n"
             )
 
         for monitor in monitors:
@@ -168,7 +162,7 @@ class CSVDomainSaver:
         CSVDomainSaver.save_users(users, data)
 
     @staticmethod
-    def save_users(users: list[User], data: dict[str, list[str]]):
+    def save_users(users: set[User], data: dict[str, list[str]]):
         data["users.csv"].append(f"user id\n")
         for user in users:
             data["users.csv"].append(f"{user.get_id()}\n")

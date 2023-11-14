@@ -1,57 +1,12 @@
+from pathlib import Path
 import discord
-import csv
-from watchlist import Watchlist
-from subscription import Subscription
 from discord.ext import tasks
 from discord import app_commands
+from domain.classes import Base, Channel, ETagMonitor, Server, Website, User
+from persistence.csv import CSVDomainLoader, CSVDomainSaver
 
-
-def save_data():
-    output = []
-    for watchl in Liste_di_monitorati.values():
-        output.append(f"{watchl.guild},{watchl.channel}\n")
-    with open("data/watchlists.csv", "w") as dest:
-        dest.writelines(output)
-
-    output = []
-    for watchl in Liste_di_monitorati.values():
-        for monitorato in watchl.monitoring.values():
-            output.append(
-                f"{monitorato.nome},{monitorato.website},{monitorato.last_checksum},{watchl.guild}\n"
-            )
-    with open("data/subscriptions.csv", "w") as dest:
-        dest.writelines(output)
-
-    output = []
-    for watchl in Liste_di_monitorati.values():
-        for monitorato in watchl.monitoring.values():
-            for iscritto in monitorato.iscritti:
-                output.append(f"{iscritto},{monitorato.nome},{watchl.guild}\n")
-    with open("data/iscritti.csv", "w") as dest:
-        dest.writelines(output)
-
-
-def load_data() -> dict[int, Watchlist]:
-    liste: dict[int, Watchlist] = {}
-    with open("data/watchlists.csv", "r") as src:
-        data = src.readlines()
-    for guild, channel in csv.reader(data):
-        liste[int(guild)] = Watchlist(int(channel), int(guild))
-
-    with open("data/subscriptions.csv", "r") as src:
-        data = src.readlines()
-    for nome, website, checksum, guild in csv.reader(data):
-        liste[int(guild)]._add(Subscription(nome, website, checksum))
-
-    with open("data/iscritti.csv", "r") as src:
-        data = src.readlines()
-    for iscritto, nome, guild in csv.reader(data):
-        liste[int(guild)].subscribe(int(iscritto), nome)
-
-    return liste
-
-
-Liste_di_monitorati: dict[int, Watchlist] = load_data()
+DATA_FOLDER: Path = Path("data")
+BASE: Base = CSVDomainLoader.load(DATA_FOLDER)
 
 
 class MyClient(discord.Client):
@@ -64,7 +19,7 @@ class MyClient(discord.Client):
 
     async def on_ready(self):
         check_updates.start(self)
-        update_counter.start(self)
+        await update_counter(self)
         print("Ready to go\n")
 
 
@@ -72,27 +27,29 @@ intents = discord.Intents.default()
 client = MyClient(intents=intents)
 
 
-@tasks.loop(seconds=10)
 async def update_counter(bot: MyClient):
     count = 0
-    for watchl in Liste_di_monitorati.values():
-        for _ in watchl.monitoring:
-            count += 1
+    for server in BASE.get_servers():
+        for channel in server.get_channels():
+            count += len(channel.get_websites())
 
     activity = discord.Game(f"I'm monitoring {count} websites!")
     await bot.change_presence(activity=activity)
 
 
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=10)
 async def check_updates(bot: MyClient):
-    for watchl in Liste_di_monitorati.values():
-        for monitorato in watchl.monitoring.values():
-            if monitorato.check_update():
-                output = f"{monitorato.nome} è stato aggiornato!\n"
-                for user in monitorato.iscritti:
-                    output += f"* <@{user}>\n"
-                await bot.get_channel(watchl.channel).send(output)
-    save_data()
+    for server in BASE.get_servers():
+        for channel in server.get_channels():
+            for website in channel.get_websites():
+                monitor = website.get_monitor()
+                monitor.check_update()
+                if monitor.is_updated():
+                    output: str = f"{website.get_hyperlink()} was updated!\n"
+                    for user in website.get_users():
+                        output += f"* <@{user.get_id()}>\n"
+                    await bot.get_channel(website.get_channel().get_id()).send(output)  # type: ignore
+    CSVDomainSaver.save(BASE, DATA_FOLDER)
 
 
 @client.tree.command(
@@ -103,18 +60,40 @@ async def check_updates(bot: MyClient):
 @discord.app_commands.describe(
     name="The name of this subscription",
     website="The full URL of the website that you want to monitor for changes",
+    channel="The discord channel where the updates should be sent",
 )
 @discord.app_commands.checks.has_permissions(manage_messages=True)
-async def monitor_website(interaction: discord.Interaction, name: str, website: str):
-    # aggiungere il sito web ai monitorati
-    if Liste_di_monitorati[interaction.guild_id].add_website(name, website):
-        await interaction.response.send_message(
-            f"'{name}' is now being monitored at '{website}'"
-        )
-    else:
-        await interaction.response.send_message(
-            f"'{name}' was already being monitored at '{website}'"
-        )
+async def monitor_website(
+    interaction: discord.Interaction, name: str, website: str, channel: str
+):
+    # If this is not a discord server (like a DM)
+    if interaction.guild_id is None:
+        await interaction.response.send_message(f"This is not a discord server")
+        return
+
+    guild: Server | None = BASE.get_server(interaction.guild_id)
+    # If this server is not a registered one
+    if guild is None:
+        await interaction.response.send_message(f"This discord server is unrecognized")
+        return
+
+    try:
+        chanid = int(channel[2:-1])
+
+    # If channel is not valid
+    except ValueError:
+        await interaction.response.send_message(f"Please use the #<channel> format")
+        return
+
+    chan = Channel(chanid, guild)
+    webs = Website(name, website, chan, ETagMonitor)
+    webs.get_monitor().check_update()
+    CSVDomainSaver.save(BASE, DATA_FOLDER)
+    await interaction.response.send_message(
+        f"{webs.get_hyperlink()} is now being monitored.\nUpdates will be posted in {chan.get_hyperlink()}"
+    )
+
+    await update_counter(client)
 
 
 @client.tree.command(
@@ -125,15 +104,24 @@ async def monitor_website(interaction: discord.Interaction, name: str, website: 
 @discord.app_commands.describe(name="The name of the subscription you want to remove")
 @discord.app_commands.checks.has_permissions(manage_messages=True)
 async def unmonitor_website(interaction: discord.Interaction, name: str):
-    # rimuovere il sito dai monitorati
-    if not Liste_di_monitorati[interaction.guild_id].rem_website(name):
+    if interaction.guild_id is None:
+        await interaction.response.send_message(f"This is not a discord server")
+        return
+
+    guild: Server | None = BASE.get_server(interaction.guild_id)
+    if guild is None:
+        await interaction.response.send_message(f"This discord server is unrecognized")
+        return
+
+    webs = guild.remove_website(name)
+    if webs:
+        CSVDomainSaver.save(BASE, DATA_FOLDER)
         await interaction.response.send_message(
-            f"{name} is not being monitored anymore"
+            f"{webs.get_hyperlink()} is not being monitored anymore"
         )
+        await update_counter(client)
     else:
-        await interaction.response.send_message(
-            f"{name} is not being monitored anymore"
-        )
+        await interaction.response.send_message(f"{name} wasn't being monitored")
 
 
 @client.tree.command(
@@ -143,10 +131,25 @@ async def unmonitor_website(interaction: discord.Interaction, name: str):
 )
 @discord.app_commands.checks.has_permissions(send_messages=True)
 async def list_websites(interaction: discord.Interaction):
-    # mostrare i monitorati
-    await interaction.response.send_message(
-        "Ecco a te:\n\n" + str(Liste_di_monitorati[interaction.guild_id])
-    )
+    if interaction.guild_id is None:
+        await interaction.response.send_message(f"This is not a discord server")
+        return
+
+    guild: Server | None = BASE.get_server(interaction.guild_id)
+    if guild is None:
+        await interaction.response.send_message(f"This discord server is unrecognized")
+        return
+
+    monitorati = guild.get_websites()
+    if len(monitorati) > 0:
+        output = ""
+        for web in monitorati:
+            output += (
+                f"* {web.get_hyperlink()} in {web.get_channel().get_hyperlink()}\n"
+            )
+    else:
+        output = "No websites are being monitored"
+    await interaction.response.send_message(output)
 
 
 @client.tree.command(
@@ -157,16 +160,34 @@ async def list_websites(interaction: discord.Interaction):
 @discord.app_commands.describe(name="The name of the website you want to subscribe to")
 @discord.app_commands.checks.has_permissions(send_messages=True)
 async def subscribe(interaction: discord.Interaction, name: str):
-    if Liste_di_monitorati[interaction.guild_id].subscribe(interaction.user.id, name):
-        await interaction.response.send_message(
-            f"<@{interaction.user.id}> is now subscribed to {name}"
-        )
-    else:
-        await interaction.response.send_message(
-            f"<@{interaction.user.id}> is already subscribed to {name}, or {name} is not being monitored"
-        )
+    # If this is not a discord server (like a DM)
+    if interaction.guild_id is None:
+        await interaction.response.send_message(f"This is not a discord server")
+        return
 
+    guild: Server | None = BASE.get_server(interaction.guild_id)
+    # If this server is not a registered one
+    if guild is None:
+        await interaction.response.send_message(f"This discord server is unrecognized")
+        return
 
+    website = guild.get_website(name)
+    if not website:
+        await interaction.response.send_message(f"{name} is not being monitored")
+        return
+
+    user = guild.get_user(interaction.user.id)
+    if not user:
+        user = User(interaction.user.id)
+        guild.add_user(user)
+
+    user.add_website(website)
+
+    await interaction.response.send_message(
+        f"{user.get_hyperlink()} is now subscribed to {website.get_hyperlink()}"
+    )
+
+    CSVDomainSaver.save(BASE, DATA_FOLDER)
 
 
 @client.tree.command(
@@ -179,14 +200,34 @@ async def subscribe(interaction: discord.Interaction, name: str):
 )
 @discord.app_commands.checks.has_permissions(send_messages=True)
 async def unsubscribe(interaction: discord.Interaction, name: str):
-    if Liste_di_monitorati[interaction.guild_id].unsubscribe(interaction.user.id, name):
+    if interaction.guild_id is None:
+        await interaction.response.send_message(f"This is not a discord server")
+        return
+
+    guild: Server | None = BASE.get_server(interaction.guild_id)
+    if guild is None:
+        await interaction.response.send_message(f"This discord server is unrecognized")
+        return
+
+    user = guild.get_user(interaction.user.id)
+    if not user:
         await interaction.response.send_message(
-            f"<@{interaction.user.id}> is now unsubscribed from {name}"
+            f"<@{interaction.user.id}> wasn't subscribed to {name}"
         )
-    else:
+        return
+
+    website = user.remove_website(name)
+    if not website:
         await interaction.response.send_message(
-            f"<@{interaction.user.id}> is not subscribed to {name}, or {name} is not being monitored"
+            f"{user.get_hyperlink()} wasn't subscribed to {name}"
         )
+        return
+
+    await interaction.response.send_message(
+        f"{user.get_hyperlink()} is now unsubscribed from {website.get_hyperlink()}"
+    )
+
+    CSVDomainSaver.save(BASE, DATA_FOLDER)
 
 
 @client.tree.command(
@@ -196,47 +237,33 @@ async def unsubscribe(interaction: discord.Interaction, name: str):
 )
 @discord.app_commands.checks.has_permissions(send_messages=True)
 async def list_subscriptions(interaction: discord.Interaction):
-    # mostrare i monitorati di questo utente
-    output = "Ecco i siti che segui:\n\n"
-    for monitorato in Liste_di_monitorati[interaction.guild_id].monitoring.values():
-        if interaction.user.id in monitorato.iscritti:
-            output += f"* {monitorato.nome}\n"
+    if interaction.guild_id is None:
+        await interaction.response.send_message(f"This is not a discord server")
+        return
+
+    guild: Server | None = BASE.get_server(interaction.guild_id)
+    if guild is None:
+        await interaction.response.send_message(f"This discord server is unrecognized")
+        return
+
+    user = guild.get_user(interaction.user.id)
+    if not user:
+        await interaction.response.send_message(f"You aren't subscribed to anything")
+        return
+
+    websites = user.get_websites()
+
+    if len(websites) > 0:
+        output = ""
+        for web in websites:
+            output += (
+                f"* {web.get_hyperlink()} in {web.get_channel().get_hyperlink()}\n"
+            )
+    else:
+        output = "You aren't subscribed to anything"
+    # mostrare i monitorati
     await interaction.response.send_message(output)
 
-
-@client.tree.command(
-    description="Subscribe someone to this website",
-    nsfw=False,
-    auto_locale_strings=False,
-)
-@discord.app_commands.describe(member="Tag the person you want to add",name="The website you want to subscribe them to" )
-@discord.app_commands.checks.has_permissions(manage_messages=True)
-async def subscribe_member(interaction:discord.Interaction, member:str,name:str):
-    if Liste_di_monitorati[interaction.guild_id].subscribe(member[2:-1], name):
-        await interaction.response.send_message(
-            f"<@{member[2:-1]}> is now subscribed to {name}"
-        )
-    else:
-        await interaction.response.send_message(
-            f"<@{member[2:-1]}> is already subscribed to {name}, or {name} is not being monitored"
-        )
-
-@client.tree.command(
-    description="Unubscribe someone from this website",
-    nsfw=False,
-    auto_locale_strings=False,
-)
-@discord.app_commands.describe(member="Tag the person you want to unsubscribe",name="The website you want to unsubscribe them from" )
-@discord.app_commands.checks.has_permissions(manage_messages=True)
-async def unsubscribe_member(interaction:discord.Interaction, member:str,name:str):
-    if Liste_di_monitorati[interaction.guild_id].unsubscribe(member[2:-1], name):
-        await interaction.response.send_message(
-            f"<@{member[2:-1]}> is now unsubscribed from {name}"
-        )
-    else:
-        await interaction.response.send_message(
-            f"<@{member[2:-1]}> was not subscribed to {name}, or {name} is not being monitored"
-        )
 
 with open("token.txt", "r") as file:
     tkn = file.readline().strip()
