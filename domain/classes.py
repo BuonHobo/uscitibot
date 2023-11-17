@@ -212,7 +212,7 @@ class ETagMonitor(Monitor):
         return res
 
     def get_data(self) -> str:
-        return f"{self._website.get_url()},{self._etag},{self._last_modified},{self._updated}"
+        return f"{self._website.get_url()},{self._etag},{self._updated}"
 
     def set_data(self, data: str):
         _, etag, updated = data.split(",")
