@@ -1,6 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from requests import get
+from requests import head
 
 
 class Base:
@@ -193,7 +193,7 @@ class ETagMonitor(Monitor):
         self._updated: bool = False
 
     def check_update(self):
-        res = get(self._website.get_url(), headers={"If-None-Match": str(self._etag)})
+        res = head(self._website.get_url(), headers={"If-None-Match": str(self._etag)})
 
         if not res.ok:
             return
@@ -212,7 +212,7 @@ class ETagMonitor(Monitor):
         return res
 
     def get_data(self) -> str:
-        return f"{self._website.get_url()},{self._etag},{self._updated}"
+        return f"{self._website.get_url()},{self._etag},{self._last_modified},{self._updated}"
 
     def set_data(self, data: str):
         _, etag, updated = data.split(",")
