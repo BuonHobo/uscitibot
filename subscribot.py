@@ -18,8 +18,11 @@ class MyClient(discord.Client):
         await self.tree.sync()
 
     async def on_ready(self):
-        check_updates.start(self)
         await update_counter(self)
+        if not check_updates.is_running():
+            check_updates.start()
+        else:
+            check_updates.restart()
         print("Ready to go\n")
 
 
