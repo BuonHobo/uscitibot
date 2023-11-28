@@ -20,9 +20,9 @@ class MyClient(discord.Client):
     async def on_ready(self):
         await update_counter(self)
         if not check_updates.is_running():
-            check_updates.start()
+            check_updates.start(self)
         else:
-            check_updates.restart()
+            check_updates.restart(self)
         print("Ready to go\n")
 
 
