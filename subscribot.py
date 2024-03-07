@@ -88,7 +88,10 @@ async def monitor_website(
         await interaction.response.send_message(f"Please use the #<channel> format")
         return
 
-    chan = Channel(chanid, guild)
+    chan = guild.get_channel(chanid)
+    if chan is None:
+        chan = Channel(chanid, guild)
+
     webs = Website(name, website, chan, ETagMonitor)
     webs.get_monitor().check_update()
     CSVDomainSaver.save(BASE, DATA_FOLDER)

@@ -33,6 +33,9 @@ class Server:
 
     def get_user(self, id: int) -> User | None:
         return self._users.get(id)
+    
+    def get_channel(self, id:int)->Channel:
+        return self._channels.get(id)
 
     def get_channels(self) -> list[Channel]:
         return list(self._channels.values())
