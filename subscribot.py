@@ -40,17 +40,21 @@ async def update_counter(bot: MyClient):
     await bot.change_presence(activity=activity)
 
 
-@tasks.loop(minutes=10)
+@tasks.loop(minutes=5)
 async def check_updates(bot: MyClient):
     for server in BASE.get_servers():
         for channel in server.get_channels():
             for website in channel.get_websites():
                 monitor = website.get_monitor()
                 monitor.check_update()
-                if monitor.is_updated():
+                update= monitor.is_updated()
+                if update:
                     output: str = f"{website.get_hyperlink()} was updated!\n"
                     for user in website.get_users():
                         output += f"* <@{user.get_id()}>\n"
+                    output += "\n```html\n"
+                    output += update
+                    output += "```"
                     await bot.get_channel(website.get_channel().get_id()).send(output)  # type: ignore
     CSVDomainSaver.save(BASE, DATA_FOLDER)
 

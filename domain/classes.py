@@ -1,6 +1,11 @@
 from __future__ import annotations
+
+import difflib
+import os
 from abc import ABC, abstractmethod
-from requests import head
+from datetime import datetime
+from pathlib import Path
+from requests import get
 
 
 class Base:
@@ -33,8 +38,8 @@ class Server:
 
     def get_user(self, id: int) -> User | None:
         return self._users.get(id)
-    
-    def get_channel(self, id:int)->Channel:
+
+    def get_channel(self, id: int) -> Channel:
         return self._channels.get(id)
 
     def get_channels(self) -> list[Channel]:
@@ -98,11 +103,11 @@ class Channel:
 
 class Website:
     def __init__(
-        self,
-        name: str,
-        url: str,
-        channel: Channel,
-        monitor: type[Monitor],
+            self,
+            name: str,
+            url: str,
+            channel: Channel,
+            monitor: type[Monitor],
     ) -> None:
         self._name = name
         self._url = url
@@ -133,6 +138,7 @@ class Website:
         return f"[{self.get_name()}]({self.get_url()})"
 
     def removal(self):
+        self._monitor.unmonitor()
         for user in self.get_users():
             user.remove_website(self._name)
 
@@ -173,7 +179,7 @@ class Monitor(ABC):
         self._website = website
 
     @abstractmethod
-    def is_updated(self) -> bool:
+    def is_updated(self) -> None | str:
         pass
 
     @abstractmethod
@@ -188,37 +194,104 @@ class Monitor(ABC):
     def set_data(self, data: str):
         pass
 
+    @abstractmethod
+    def unmonitor(self):
+        pass
+
 
 class ETagMonitor(Monitor):
+    data_dir = Path("./data/ETagMonitor")
+
     def __init__(self, website: Website) -> None:
         super().__init__(website)
         self._etag: None | str = None
+        self._last_update: None | datetime = None
         self._updated: bool = False
+        self._diff: None | str = None
+        self._content: str = ""
+        self._target: Path = self.data_dir.joinpath(self._website.get_name() + ".html")
+        self.load_content()
+
+    def load_content(self):
+        if Path(self.data_dir).exists() and self._target.exists():
+            self._content = self._target.read_text(encoding="utf-8")
+        else:
+            try:
+                self._content = get(self._website.get_url(),timeout=10).text
+                self.save_content()
+            except Exception:
+                self._content = ""
+
+    def save_content(self):
+        if not Path(self.data_dir).exists():
+            os.mkdir(self.data_dir)
+        self._target.write_text(self._content)
 
     def check_update(self):
-        res = head(self._website.get_url(), headers={"If-None-Match": str(self._etag)})
+        headers = {
+            "If-None-Match": self._etag,
+            "If-Modified-Since": self._last_update.strftime("%a, %d %b %Y %H:%M:%S GMT") if self._last_update else None,
+        }
+
+        print(f"Sending request to {self._website.get_url()} with headers: {headers}")
+
+        res = get(self._website.get_url(), headers=headers, timeout=10)
+
+        print(f"got response {res}")
 
         if not res.ok:
             return
 
         if self._etag is None:
-            self._etag = res.headers["ETag"]
-            return
+            if "ETag" in res.headers:
+                self._etag = res.headers["ETag"]
+
+        if self._last_update is None:
+            self._last_update = datetime.utcnow()
 
         if res.status_code != 304:
+            print("Update detected")
             self._updated = True
-            self._etag = res.headers["ETag"]
+            if "ETag" in res.headers:
+                self._etag = res.headers["ETag"]
+            self._last_update = datetime.utcnow()
+            if self._content != "":
+                self._diff = "\n".join(
+                    difflib.unified_diff(self._content.splitlines(), res.text.splitlines(), fromfile="Before",
+                                         tofile="After"))
+                print(f"Set diff to {self._diff}")
+            else:
+                self._diff = None
+            self._content = res.text
+            self.save_content()
 
-    def is_updated(self) -> bool:
+    def is_updated(self) -> None | str:
         res = self._updated
         self._updated = False
-        return res
+        if res:
+            return self._diff
+        else:
+            return None
 
     def get_data(self) -> str:
-        return f"{self._website.get_url()},{self._etag},{self._updated}"
+        return f"{self._website.get_url()},{self._etag},{self._updated},{self._last_update.isoformat()}"
 
-    def set_data(self, data: str):
-        _, etag, updated = data.split(",")
+    def set_data(self, data: list[str]):
+        etag = data[1]
         if etag != "None":
-            self._etag = etag
+            self._etag = f'"{etag}"'
+        updated = data[2]
         self._updated = updated == "True"
+        try:
+            last_update = data[3]
+            self._last_update = datetime.fromisoformat(last_update)
+        except IndexError as e:
+            return
+        try:
+            content = data[4]
+            self._content = content
+        except IndexError as e:
+            return
+
+    def unmonitor(self):
+        os.remove(self._target)

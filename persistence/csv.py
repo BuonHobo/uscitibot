@@ -1,6 +1,7 @@
 from pathlib import Path
 from domain.classes import Base, Server, User, Website, Monitor, Channel
 import domain.classes
+import _csv
 
 
 class CSVDomainLoader:
@@ -22,9 +23,10 @@ class CSVDomainLoader:
 
         for file in folder.joinpath("monitors").iterdir():
             with file.open("r") as f:
+                reader = _csv.reader(f)
                 monitor_data = {
                     file.name.removesuffix(".csv"): {
-                        line.split(",")[0]: line.strip() for line in f.readlines()
+                        row[0]: row for row in reader
                     }
                 }
 
@@ -47,7 +49,7 @@ class CSVDomainLoader:
 
     @staticmethod
     def load_channels(
-        servers: dict[int, Server], data: dict[str, list[str]]
+            servers: dict[int, Server], data: dict[str, list[str]]
     ) -> dict[int, Channel]:
         channels: dict[int, Channel] = {}
         for line in data["channels.csv"]:
