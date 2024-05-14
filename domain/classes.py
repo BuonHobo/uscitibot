@@ -233,11 +233,9 @@ class ETagMonitor(Monitor):
             "If-Modified-Since": self._last_update.strftime("%a, %d %b %Y %H:%M:%S GMT") if self._last_update else None,
         }
 
-        print(f"Sending request to {self._website.get_url()} with headers: {headers}")
+        print(f"[{datetime.now()}] Sending request to {self._website.get_url()} with headers: {headers}")
 
         res = get(self._website.get_url(), headers=headers, timeout=10)
-
-        print(f"got response {res}")
 
         if not res.ok:
             return
@@ -259,7 +257,6 @@ class ETagMonitor(Monitor):
                 self._diff = "\n".join(
                     difflib.unified_diff(self._content.splitlines(), res.text.splitlines(), fromfile="Before",
                                          tofile="After"))
-                print(f"Set diff to {self._diff}")
             else:
                 self._diff = None
             self._content = res.text
