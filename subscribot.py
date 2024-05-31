@@ -56,10 +56,7 @@ async def check_updates(bot: MyClient):
                     output += update
                     output += "```"
                     if len(output) > 2000:
-<<<<<<< HEAD
-=======
                         addition = "...```\nThe message was truncated because it was too long :("
->>>>>>> 2521819 (improved message cutoff)
                         output = output[:2000-len(addition)] + addition
                     await bot.get_channel(website.get_channel().get_id()).send(output)  # type: ignore
     CSVDomainSaver.save(BASE, DATA_FOLDER)
