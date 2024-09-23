@@ -4,6 +4,7 @@ from discord.ext import tasks
 from discord import app_commands
 from domain.classes import Base, Channel, ETagMonitor, Server, Website, User
 from persistence.csv import CSVDomainLoader, CSVDomainSaver
+import os
 
 DATA_FOLDER: Path = Path("data")
 BASE: Base = CSVDomainLoader.load(DATA_FOLDER)
@@ -278,7 +279,6 @@ async def list_subscriptions(interaction: discord.Interaction):
     await interaction.response.send_message(output)
 
 
-with open("token.txt", "r") as file:
-    tkn = file.readline().strip()
+tkn = os.environ.get("DISCORD_TOKEN")
 
 client.run(tkn)
